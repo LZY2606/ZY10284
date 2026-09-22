@@ -1,0 +1,18 @@
+public final class dev/zacsweers/redacted/gradle/RedactedGradleSubplugin : org/jetbrains/kotlin/gradle/plugin/KotlinCompilerPluginSupportPlugin {
+	public fun <init> ()V
+	public synthetic fun apply (Ljava/lang/Object;)V
+	public fun apply (Lorg/gradle/api/Project;)V
+	public fun applyToCompilation (Lorg/jetbrains/kotlin/gradle/plugin/KotlinCompilation;)Lorg/gradle/api/provider/Provider;
+	public fun getCompilerPluginId ()Ljava/lang/String;
+	public fun getPluginArtifact ()Lorg/jetbrains/kotlin/gradle/plugin/SubpluginArtifact;
+	public fun getPluginArtifactForNative ()Lorg/jetbrains/kotlin/gradle/plugin/SubpluginArtifact;
+	public fun isApplicable (Lorg/jetbrains/kotlin/gradle/plugin/KotlinCompilation;)Z
+}
+
+public abstract class dev/zacsweers/redacted/gradle/RedactedPluginExtension {
+	public fun <init> (Lorg/gradle/api/model/ObjectFactory;)V
+	public final fun getEnabled ()Lorg/gradle/api/provider/Property;
+	public final fun getRedactedAnnotation ()Lorg/gradle/api/provider/Property;
+	public final fun getReplacementString ()Lorg/gradle/api/provider/Property;
+}
+

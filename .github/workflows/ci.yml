@@ -1,0 +1,139 @@
+name: CI
+
+on:
+  # Only run push on main
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**/*.md'
+  # Always run on PRs
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: 'ci-${{ github.event.merge_group.head_ref || github.head_ref }}-${{ github.workflow }}'
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  format:
+    name: format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install JDK
+        uses: actions/setup-java@v6
+        with:
+          distribution: 'zulu'
+          java-version: '25'
+
+      - uses: ZacSweers/kempt@main
+        with:
+          cache: true
+
+  generate-matrix:
+    name: generate jvm matrix
+    runs-on: ubuntu-slim
+    outputs:
+      matrix: ${{ steps.generate.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Generate matrix
+        id: generate
+        run: ./scripts/generate-ci-matrix.sh
+
+  jvm:
+    name: jvm / Kotlin ${{ matrix.kotlin }} / StringConcat ${{ matrix.stringConcat }}
+    runs-on: ubuntu-latest
+    needs: generate-matrix
+
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.generate-matrix.outputs.matrix) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Install JDK
+        uses: actions/setup-java@v6
+        with:
+          distribution: 'zulu'
+          java-version: '25'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Build with Gradle
+        run: ./gradlew :redacted-compiler-plugin:check :sample-jvm:check -PkotlinVersion=${{ matrix.kotlin }} -Pstring_concat=${{ matrix.stringConcat }} --quiet
+
+  all-platforms:
+    name: "platform / ${{ matrix.os }}"
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ macos-latest, ubuntu-latest, windows-latest ]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Configure JDK
+        uses: actions/setup-java@v6
+        with:
+          distribution: 'zulu'
+          java-version: '25'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Test
+        run: ./gradlew check --quiet
+
+  # https://jakewharton.com/fan-in-to-a-single-required-github-action/
+  final-status:
+    if: always()
+    runs-on: ubuntu-slim
+    needs:
+      - format
+      - generate-matrix
+      - jvm
+      - all-platforms
+    steps:
+      - name: Check
+        run: |
+          results=$(tr -d '\n' <<< '${{ toJSON(needs.*.result) }}')
+          if ! grep -q -v -E '(failure|cancelled)' <<< "$results"; then
+            echo "One or more required jobs failed"
+            exit 1
+          fi
+
+  publish:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && github.repository == 'zacsweers/redacted-compiler-plugin'
+    needs: final-status
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Configure JDK
+        uses: actions/setup-java@v6
+        with:
+          distribution: 'zulu'
+          java-version: '25'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Upload snapshot (main only)
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.SonatypeUsername }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.SonatypePassword }}
+        run: ./publish.sh
