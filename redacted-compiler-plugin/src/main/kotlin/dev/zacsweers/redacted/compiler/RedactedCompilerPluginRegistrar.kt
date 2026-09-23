@@ -43,18 +43,19 @@ public class RedactedCompilerPluginRegistrar : CompilerPluginRegistrar() {
         ClassId.fromString(it)
       }
 
+    // Shared FIR -> IR handoff for this compilation.
+    val planStore = RedactionPlanStore()
+
     with(compatContext) {
       registerFirExtensionCompat(
-        RedactedFirExtensionRegistrar(redactedAnnotations, unRedactedAnnotations)
-      )
-      registerIrExtensionCompat(
-        RedactedIrGenerationExtension(
-          replacementString,
+        RedactedFirExtensionRegistrar(
           redactedAnnotations,
           unRedactedAnnotations,
-          compatContext,
+          replacementString,
+          planStore,
         )
       )
+      registerIrExtensionCompat(RedactedIrGenerationExtension(planStore))
     }
   }
 }

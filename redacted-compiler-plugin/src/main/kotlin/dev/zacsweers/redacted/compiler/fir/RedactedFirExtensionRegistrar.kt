@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package dev.zacsweers.redacted.compiler.fir
 
-import dev.zacsweers.redacted.compiler.firstNotNullResult
-import dev.zacsweers.redacted.compiler.unsafeLazy
+import dev.zacsweers.redacted.compiler.RedactionPlan
+import dev.zacsweers.redacted.compiler.RedactionPlanStore
 import org.jetbrains.kotlin.descriptors.isEnumEntry
 import org.jetbrains.kotlin.descriptors.isObject
 import org.jetbrains.kotlin.diagnostics.DiagnosticReporter
@@ -15,38 +15,34 @@ import org.jetbrains.kotlin.fir.analysis.checkers.declaration.DeclarationChecker
 import org.jetbrains.kotlin.fir.analysis.checkers.declaration.FirClassChecker
 import org.jetbrains.kotlin.fir.analysis.extensions.FirAdditionalCheckersExtension
 import org.jetbrains.kotlin.fir.declarations.FirClass
-import org.jetbrains.kotlin.fir.declarations.FirDeclarationOrigin
-import org.jetbrains.kotlin.fir.declarations.getAnnotationByClassId
-import org.jetbrains.kotlin.fir.declarations.processAllDeclarations
+import org.jetbrains.kotlin.fir.declarations.FirRegularClass
 import org.jetbrains.kotlin.fir.declarations.toAnnotationClassIdSafe
 import org.jetbrains.kotlin.fir.declarations.utils.isEnumClass
 import org.jetbrains.kotlin.fir.declarations.utils.isExpect
-import org.jetbrains.kotlin.fir.declarations.utils.isExtension
 import org.jetbrains.kotlin.fir.declarations.utils.isExternal
 import org.jetbrains.kotlin.fir.declarations.utils.isFinal
 import org.jetbrains.kotlin.fir.declarations.utils.isInlineOrValue
+import org.jetbrains.kotlin.fir.declarations.utils.isLocal
 import org.jetbrains.kotlin.fir.declarations.utils.nameOrSpecialName
 import org.jetbrains.kotlin.fir.expressions.FirAnnotation
 import org.jetbrains.kotlin.fir.extensions.FirExtensionRegistrar
-import org.jetbrains.kotlin.fir.resolve.fullyExpandedType
-import org.jetbrains.kotlin.fir.resolve.toSymbol
-import org.jetbrains.kotlin.fir.symbols.impl.FirNamedFunctionSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirPropertySymbol
-import org.jetbrains.kotlin.fir.types.ConeClassLikeType
-import org.jetbrains.kotlin.fir.types.ConeErrorType
-import org.jetbrains.kotlin.fir.types.FirTypeRef
 import org.jetbrains.kotlin.fir.types.classId
-import org.jetbrains.kotlin.fir.types.coneTypeOrNull
-import org.jetbrains.kotlin.fir.types.isString
 import org.jetbrains.kotlin.name.ClassId
-import org.jetbrains.kotlin.util.OperatorNameConventions
 
 public class RedactedFirExtensionRegistrar(
   private val redactedAnnotations: Set<ClassId>,
   private val unRedactedAnnotations: Set<ClassId>,
+  private val replacementString: String,
+  private val planStore: RedactionPlanStore,
 ) : FirExtensionRegistrar() {
   override fun ExtensionRegistrarContext.configurePlugin() {
-    +RedactedFirBuiltIns.getFactory(redactedAnnotations, unRedactedAnnotations)
+    +RedactedFirBuiltIns.getFactory(
+      redactedAnnotations,
+      unRedactedAnnotations,
+      replacementString,
+      planStore,
+    )
     +::FirRedactedCheckers
   }
 }
@@ -60,62 +56,25 @@ internal class FirRedactedCheckers(session: FirSession) : FirAdditionalCheckersE
 }
 
 internal object FirRedactedDeclarationChecker : FirClassChecker(MppCheckerKind.Common) {
-  private class RedactedSupertype(
-    val ref: FirTypeRef,
-    val clazz: ConeClassLikeType,
-    val redactedClassId: ClassId,
-  )
 
   context(context: CheckerContext, reporter: DiagnosticReporter)
   override fun check(declaration: FirClass) {
-    val classRedactedAnnotations =
-      context.session.redactedAnnotations.mapNotNull { classId ->
-        declaration.getAnnotationByClassId(classId, context.session)?.let { it to classId }
-      }
-    val classUnRedactedAnnotations =
-      context.session.unRedactedAnnotations.mapNotNull { classId ->
-        declaration.getAnnotationByClassId(classId, context.session)?.let { it to classId }
-      }
+    val scan = RedactedFirAdapter(context.session).scan(declaration)
+    val classRedactedAnnotations = scan.classRedactedAnnotations
+    val classUnRedactedAnnotations = scan.classUnredactedAnnotations
     val classIsRedacted = classRedactedAnnotations.isNotEmpty()
     val classIsUnRedacted = classUnRedactedAnnotations.isNotEmpty()
-    val redactedSupertype: RedactedSupertype? by unsafeLazy {
-      for (ref in declaration.superTypeRefs) {
-        val supertype = ref.coneTypeOrNull ?: continue
-        if (supertype is ConeErrorType) continue
-        if (supertype !is ConeClassLikeType) continue
-        val redactedAnnotation =
-          supertype.classId.toSymbol()?.resolvedAnnotationClassIds?.firstOrNull {
-            it in context.session.redactedAnnotations
-          }
-        if (redactedAnnotation != null) {
-          return@unsafeLazy RedactedSupertype(ref, supertype, redactedAnnotation)
-        }
-      }
-      null
-    }
+    val redactedSupertype = scan.redactedSupertype
 
     val redactedProperties = mutableMapOf<FirPropertySymbol, Pair<FirAnnotation, ClassId>>()
     val unredactedProperties = mutableMapOf<FirPropertySymbol, Pair<FirAnnotation, ClassId>>()
-
-    val properties = mutableListOf<FirPropertySymbol>()
-    var customToStringFunction: FirNamedFunctionSymbol? = null
-    declaration.processAllDeclarations(context.session) { symbol ->
-      if (symbol is FirPropertySymbol) {
-        properties += symbol
-      } else if (symbol is FirNamedFunctionSymbol) {
-        if (
-          symbol.isToStringFromAny(context.session) && symbol.origin == FirDeclarationOrigin.Source
-        ) {
-          customToStringFunction = symbol
-        }
-      }
-    }
-    for (prop in properties) {
-      prop.redactedAnnotation(context.session)?.let { redactedProperties[prop] = it }
-      prop.unredactedAnnotation(context.session)?.let { unredactedProperties[prop] = it }
+    for (property in scan.properties) {
+      property.redactedAnnotation?.let { redactedProperties[property.symbol] = it }
+      property.unredactedAnnotation?.let { unredactedProperties[property.symbol] = it }
     }
     val anyRedacted = redactedProperties.isNotEmpty()
     val anyUnredacted = unredactedProperties.isNotEmpty()
+    val customToStringFunction = scan.customToStringFunction
 
     val redactedName = {
       redactedProperties.values.firstOrNull()?.second?.shortClassName?.asString()
@@ -252,37 +211,58 @@ internal object FirRedactedDeclarationChecker : FirClassChecker(MppCheckerKind.C
         }
         return
       }
-      // Rest filled in by the IR plugin
     }
+
+    // Diagnostics passed (or nothing to check). Hand a validated plan off to IR generation.
+    registerPlan(declaration, scan)
   }
 
-  private fun FirNamedFunctionSymbol.isToStringFromAny(session: FirSession): Boolean =
-    name == OperatorNameConventions.TO_STRING &&
-      dispatchReceiverType != null &&
-      !isExtension &&
-      valueParameterSymbols.isEmpty() &&
-      resolvedReturnType.fullyExpandedType(session).isString
+  context(context: CheckerContext)
+  private fun registerPlan(declaration: FirClass, scan: RedactedFirAdapter.ClassScan) {
+    // Plans are keyed by ClassId, so local and anonymous classes cannot participate.
+    if (declaration !is FirRegularClass || declaration.isLocal) return
 
-  private fun FirPropertySymbol.redactedAnnotation(
-    session: FirSession
-  ): Pair<FirAnnotation, ClassId>? = resolvedAnnotationsWithClassIds.firstNotNullResult {
-    val classId = it.toAnnotationClassIdSafe(session)
-    if (classId != null && classId in session.redactedAnnotations) {
-      it to classId
-    } else {
-      null
+    val builtIns = context.session.redactedFirBuiltIns
+    val classIsRedacted = scan.classRedactedAnnotations.isNotEmpty()
+    val classIsUnredacted = scan.classUnredactedAnnotations.isNotEmpty()
+    val supertypeIsRedacted = scan.redactedSupertype != null
+    val anyRedactedProperty = scan.constructorProperties.any { it.redactedAnnotation != null }
+    if (
+      !(classIsRedacted || supertypeIsRedacted || classIsUnredacted || anyRedactedProperty)
+    ) {
+      return
     }
-  }
 
-  private fun FirPropertySymbol.unredactedAnnotation(
-    session: FirSession
-  ): Pair<FirAnnotation, ClassId>? = resolvedAnnotationsWithClassIds.firstNotNullResult {
-    val classId = it.toAnnotationClassIdSafe(session)
-    if (classId != null && classId in session.unRedactedAnnotations) {
-      it to classId
-    } else {
-      null
-    }
+    val plan =
+      RedactionPlan(
+        classId = declaration.symbol.classId,
+        eligibility =
+          when {
+            declaration.isInlineOrValue -> RedactionPlan.Eligibility.VALUE_CLASS
+            declaration.classKind.isObject -> RedactionPlan.Eligibility.OBJECT
+            declaration.status.isData -> RedactionPlan.Eligibility.DATA_CLASS
+            else -> RedactionPlan.Eligibility.OTHER
+          },
+        properties =
+          scan.constructorProperties.map { property ->
+            RedactionPlan.Property(
+              name = property.name,
+              isRedacted = property.redactedAnnotation != null,
+              isUnredacted = property.unredactedAnnotation != null,
+            )
+          },
+        effectiveRule =
+          when {
+            classIsRedacted -> RedactionPlan.EffectiveRule.CLASS
+            supertypeIsRedacted -> RedactionPlan.EffectiveRule.SUPERTYPE
+            else -> RedactionPlan.EffectiveRule.PROPERTY
+          },
+        classIsUnredacted = classIsUnredacted,
+        replacement = builtIns.replacementString,
+        existingToStringPolicy = RedactionPlan.ExistingToStringPolicy.REPLACE_GENERATED,
+        sourceOrigin = context.containingFile?.name ?: "<unknown>",
+      )
+    builtIns.planStore.register(plan)
   }
 
   private val FirClass.isInstantiableEnum: Boolean

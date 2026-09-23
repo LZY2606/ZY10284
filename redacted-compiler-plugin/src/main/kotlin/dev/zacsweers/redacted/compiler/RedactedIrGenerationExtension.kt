@@ -2,27 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 package dev.zacsweers.redacted.compiler
 
-import dev.zacsweers.metro.compiler.compat.CompatContext
 import org.jetbrains.kotlin.backend.common.extensions.IrGenerationExtension
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
 import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
-import org.jetbrains.kotlin.name.ClassId
 
 public class RedactedIrGenerationExtension(
-  private val replacementString: String,
-  private val redactedAnnotations: Set<ClassId>,
-  private val unRedactedAnnotations: Set<ClassId>,
-  private val compatContext: CompatContext = CompatContext.create(),
+  private val planStore: RedactionPlanStore,
 ) : IrGenerationExtension {
   override fun generate(moduleFragment: IrModuleFragment, pluginContext: IrPluginContext) {
-    val redactedTransformer =
-      RedactedIrVisitor(
-        pluginContext,
-        redactedAnnotations,
-        unRedactedAnnotations,
-        replacementString,
-        compatContext,
-      )
+    val redactedTransformer = RedactedIrVisitor(pluginContext, planStore)
     moduleFragment.transform(redactedTransformer, null)
+
+    // Contract check: every plan FIR validated for this module must have generated exactly one
+    // toString() implementation.
+    val unconsumed = planStore.all().filter { it.key !in redactedTransformer.consumedPlanKeys }
+    check(unconsumed.isEmpty()) {
+      "Redaction plan(s) validated by FIR but never generated: " +
+        unconsumed.joinToString(", ") { "${it.key} (${it.sourceOrigin})" }
+    }
   }
 }

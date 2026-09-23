@@ -13,12 +13,90 @@ public final class dev/zacsweers/redacted/compiler/RedactedCompilerPluginRegistr
 }
 
 public final class dev/zacsweers/redacted/compiler/RedactedIrGenerationExtension : org/jetbrains/kotlin/backend/common/extensions/IrGenerationExtension {
-	public fun <init> (Ljava/lang/String;Ljava/util/Set;Ljava/util/Set;Ldev/zacsweers/metro/compiler/compat/CompatContext;)V
-	public synthetic fun <init> (Ljava/lang/String;Ljava/util/Set;Ljava/util/Set;Ldev/zacsweers/metro/compiler/compat/CompatContext;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Ldev/zacsweers/redacted/compiler/RedactionPlanStore;)V
 	public fun generate (Lorg/jetbrains/kotlin/ir/declarations/IrModuleFragment;Lorg/jetbrains/kotlin/backend/common/extensions/IrPluginContext;)V
 }
 
+public final class dev/zacsweers/redacted/compiler/RedactionPlan {
+	public static final field Companion Ldev/zacsweers/redacted/compiler/RedactionPlan$Companion;
+	public fun <init> (Lorg/jetbrains/kotlin/name/ClassId;Ldev/zacsweers/redacted/compiler/RedactionPlan$Eligibility;Ljava/util/List;Ldev/zacsweers/redacted/compiler/RedactionPlan$EffectiveRule;ZLjava/lang/String;Ldev/zacsweers/redacted/compiler/RedactionPlan$ExistingToStringPolicy;Ljava/lang/String;)V
+	public final fun component1 ()Lorg/jetbrains/kotlin/name/ClassId;
+	public final fun component2 ()Ldev/zacsweers/redacted/compiler/RedactionPlan$Eligibility;
+	public final fun component3 ()Ljava/util/List;
+	public final fun component4 ()Ldev/zacsweers/redacted/compiler/RedactionPlan$EffectiveRule;
+	public final fun component5 ()Z
+	public final fun component6 ()Ljava/lang/String;
+	public final fun component7 ()Ldev/zacsweers/redacted/compiler/RedactionPlan$ExistingToStringPolicy;
+	public final fun component8 ()Ljava/lang/String;
+	public final fun copy (Lorg/jetbrains/kotlin/name/ClassId;Ldev/zacsweers/redacted/compiler/RedactionPlan$Eligibility;Ljava/util/List;Ldev/zacsweers/redacted/compiler/RedactionPlan$EffectiveRule;ZLjava/lang/String;Ldev/zacsweers/redacted/compiler/RedactionPlan$ExistingToStringPolicy;Ljava/lang/String;)Ldev/zacsweers/redacted/compiler/RedactionPlan;
+	public static synthetic fun copy$default (Ldev/zacsweers/redacted/compiler/RedactionPlan;Lorg/jetbrains/kotlin/name/ClassId;Ldev/zacsweers/redacted/compiler/RedactionPlan$Eligibility;Ljava/util/List;Ldev/zacsweers/redacted/compiler/RedactionPlan$EffectiveRule;ZLjava/lang/String;Ldev/zacsweers/redacted/compiler/RedactionPlan$ExistingToStringPolicy;Ljava/lang/String;ILjava/lang/Object;)Ldev/zacsweers/redacted/compiler/RedactionPlan;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getClassId ()Lorg/jetbrains/kotlin/name/ClassId;
+	public final fun getClassIsUnredacted ()Z
+	public final fun getEffectiveRule ()Ldev/zacsweers/redacted/compiler/RedactionPlan$EffectiveRule;
+	public final fun getEligibility ()Ldev/zacsweers/redacted/compiler/RedactionPlan$Eligibility;
+	public final fun getExistingToStringPolicy ()Ldev/zacsweers/redacted/compiler/RedactionPlan$ExistingToStringPolicy;
+	public final fun getKey ()Ljava/lang/String;
+	public final fun getProperties ()Ljava/util/List;
+	public final fun getReplacement ()Ljava/lang/String;
+	public final fun getSourceOrigin ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/zacsweers/redacted/compiler/RedactionPlan$Companion {
+	public final fun keyOf (Lorg/jetbrains/kotlin/name/ClassId;)Ljava/lang/String;
+}
+
+public final class dev/zacsweers/redacted/compiler/RedactionPlan$EffectiveRule : java/lang/Enum {
+	public static final field CLASS Ldev/zacsweers/redacted/compiler/RedactionPlan$EffectiveRule;
+	public static final field PROPERTY Ldev/zacsweers/redacted/compiler/RedactionPlan$EffectiveRule;
+	public static final field SUPERTYPE Ldev/zacsweers/redacted/compiler/RedactionPlan$EffectiveRule;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/zacsweers/redacted/compiler/RedactionPlan$EffectiveRule;
+	public static fun values ()[Ldev/zacsweers/redacted/compiler/RedactionPlan$EffectiveRule;
+}
+
+public final class dev/zacsweers/redacted/compiler/RedactionPlan$Eligibility : java/lang/Enum {
+	public static final field DATA_CLASS Ldev/zacsweers/redacted/compiler/RedactionPlan$Eligibility;
+	public static final field OBJECT Ldev/zacsweers/redacted/compiler/RedactionPlan$Eligibility;
+	public static final field OTHER Ldev/zacsweers/redacted/compiler/RedactionPlan$Eligibility;
+	public static final field VALUE_CLASS Ldev/zacsweers/redacted/compiler/RedactionPlan$Eligibility;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/zacsweers/redacted/compiler/RedactionPlan$Eligibility;
+	public static fun values ()[Ldev/zacsweers/redacted/compiler/RedactionPlan$Eligibility;
+}
+
+public final class dev/zacsweers/redacted/compiler/RedactionPlan$ExistingToStringPolicy : java/lang/Enum {
+	public static final field REPLACE_GENERATED Ldev/zacsweers/redacted/compiler/RedactionPlan$ExistingToStringPolicy;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/zacsweers/redacted/compiler/RedactionPlan$ExistingToStringPolicy;
+	public static fun values ()[Ldev/zacsweers/redacted/compiler/RedactionPlan$ExistingToStringPolicy;
+}
+
+public final class dev/zacsweers/redacted/compiler/RedactionPlan$Property {
+	public fun <init> (Ljava/lang/String;ZZ)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Z
+	public final fun component3 ()Z
+	public final fun copy (Ljava/lang/String;ZZ)Ldev/zacsweers/redacted/compiler/RedactionPlan$Property;
+	public static synthetic fun copy$default (Ldev/zacsweers/redacted/compiler/RedactionPlan$Property;Ljava/lang/String;ZZILjava/lang/Object;)Ldev/zacsweers/redacted/compiler/RedactionPlan$Property;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getName ()Ljava/lang/String;
+	public fun hashCode ()I
+	public final fun isRedacted ()Z
+	public final fun isUnredacted ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/zacsweers/redacted/compiler/RedactionPlanStore {
+	public fun <init> ()V
+	public final fun all ()Ljava/util/List;
+	public final fun planFor (Lorg/jetbrains/kotlin/name/ClassId;)Ldev/zacsweers/redacted/compiler/RedactionPlan;
+	public final fun register (Ldev/zacsweers/redacted/compiler/RedactionPlan;)V
+}
+
 public final class dev/zacsweers/redacted/compiler/fir/RedactedFirExtensionRegistrar : org/jetbrains/kotlin/fir/extensions/FirExtensionRegistrar {
-	public fun <init> (Ljava/util/Set;Ljava/util/Set;)V
+	public fun <init> (Ljava/util/Set;Ljava/util/Set;Ljava/lang/String;Ldev/zacsweers/redacted/compiler/RedactionPlanStore;)V
 }
 

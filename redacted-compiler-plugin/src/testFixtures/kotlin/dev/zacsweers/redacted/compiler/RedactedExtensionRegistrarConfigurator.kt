@@ -44,17 +44,21 @@ class RedactedExtensionRegistrarConfigurator(testServices: TestServices) :
 
     val compatContext = CompatContext.create()
 
+    // Shared FIR -> IR handoff for this module.
+    val planStore = RedactionPlanStore()
+
     with(RedactedCompilerPluginRegistrar()) {
       with(compatContext) {
         this@registerCompilerExtensions.registerFirExtensionCompat(
-          RedactedFirExtensionRegistrar(redactedAnnotations, unredactedAnnotations)
-        )
-        this@registerCompilerExtensions.registerIrExtensionCompat(
-          RedactedIrGenerationExtension(
-            replacementString,
+          RedactedFirExtensionRegistrar(
             redactedAnnotations,
             unredactedAnnotations,
+            replacementString,
+            planStore,
           )
+        )
+        this@registerCompilerExtensions.registerIrExtensionCompat(
+          RedactedIrGenerationExtension(planStore)
         )
       }
     }

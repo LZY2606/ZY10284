@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package dev.zacsweers.redacted.compiler.fir
 
+import dev.zacsweers.redacted.compiler.RedactionPlanStore
 import org.jetbrains.kotlin.fir.FirSession
 import org.jetbrains.kotlin.fir.extensions.FirExtensionSessionComponent
 import org.jetbrains.kotlin.name.ClassId
@@ -10,12 +11,24 @@ internal class RedactedFirBuiltIns(
   session: FirSession,
   val redactedAnnotations: Set<ClassId>,
   val unRedactedAnnotations: Set<ClassId>,
+  val replacementString: String,
+  val planStore: RedactionPlanStore,
 ) : FirExtensionSessionComponent(session) {
   companion object {
-    fun getFactory(redactedAnnotations: Set<ClassId>, unRedactedAnnotations: Set<ClassId>) =
-      Factory { session ->
-        RedactedFirBuiltIns(session, redactedAnnotations, unRedactedAnnotations)
-      }
+    fun getFactory(
+      redactedAnnotations: Set<ClassId>,
+      unRedactedAnnotations: Set<ClassId>,
+      replacementString: String,
+      planStore: RedactionPlanStore,
+    ) = Factory { session ->
+      RedactedFirBuiltIns(
+        session,
+        redactedAnnotations,
+        unRedactedAnnotations,
+        replacementString,
+        planStore,
+      )
+    }
   }
 }
 

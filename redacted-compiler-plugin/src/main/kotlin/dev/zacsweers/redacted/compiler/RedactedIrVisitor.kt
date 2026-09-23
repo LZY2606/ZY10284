@@ -4,7 +4,6 @@
 
 package dev.zacsweers.redacted.compiler
 
-import dev.zacsweers.metro.compiler.compat.CompatContext
 import org.jetbrains.kotlin.backend.common.IrElementTransformerVoidWithContext
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
 import org.jetbrains.kotlin.backend.common.lower.DeclarationIrBuilder
@@ -17,41 +16,36 @@ import org.jetbrains.kotlin.ir.builders.irGet
 import org.jetbrains.kotlin.ir.builders.irGetField
 import org.jetbrains.kotlin.ir.builders.irReturn
 import org.jetbrains.kotlin.ir.builders.irString
-import org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrFunction
 import org.jetbrains.kotlin.ir.declarations.IrParameterKind
 import org.jetbrains.kotlin.ir.declarations.IrProperty
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
-import org.jetbrains.kotlin.ir.declarations.IrValueParameter
 import org.jetbrains.kotlin.ir.expressions.addArgument
 import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.ir.types.isArray
 import org.jetbrains.kotlin.ir.types.isString
 import org.jetbrains.kotlin.ir.util.classId
-import org.jetbrains.kotlin.ir.util.getAllSuperclasses
 import org.jetbrains.kotlin.ir.util.isPrimitiveArray
-import org.jetbrains.kotlin.ir.util.parentAsClass
 import org.jetbrains.kotlin.ir.util.parentClassOrNull
-import org.jetbrains.kotlin.ir.util.primaryConstructor
 import org.jetbrains.kotlin.ir.util.properties
-import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.util.OperatorNameConventions
 
+/**
+ * Executes [RedactionPlan]s produced by FIR validation. For each toString() on a class with a
+ * registered plan, exactly one redacted implementation is generated; nothing is re-derived from
+ * annotations here.
+ */
 internal class RedactedIrVisitor(
   private val pluginContext: IrPluginContext,
-  private val redactedAnnotations: Set<ClassId>,
-  private val unRedactedAnnotations: Set<ClassId>,
-  private val replacementString: String,
-  private val compatContext: CompatContext,
+  private val planStore: RedactionPlanStore,
 ) : IrElementTransformerVoidWithContext() {
 
-  private class Property(
-    val ir: IrProperty,
-    val isRedacted: Boolean,
-    val isUnredacted: Boolean,
-    val parameter: IrValueParameter,
-  )
+  private val _consumedPlanKeys = LinkedHashSet<String>()
+
+  /** Keys of plans that generated their toString(), in consumption order. */
+  val consumedPlanKeys: Set<String>
+    get() = _consumedPlanKeys
 
   override fun visitFunctionNew(declaration: IrFunction): IrStatement {
     if (declaration !is IrSimpleFunction) return super.visitFunctionNew(declaration)
@@ -59,45 +53,15 @@ internal class RedactedIrVisitor(
 
     val declarationParent =
       declaration.parentClassOrNull ?: return super.visitFunctionNew(declaration)
-    val primaryConstructor =
-      declarationParent.primaryConstructor ?: return super.visitFunctionNew(declaration)
-    val constructorParameters =
-      primaryConstructor.parameters
-        .filter { it.kind == IrParameterKind.Regular }
-        .associateBy { it.name.asString() }
+    val classId = declarationParent.classId ?: return super.visitFunctionNew(declaration)
+    val plan = planStore.planFor(classId) ?: return super.visitFunctionNew(declaration)
 
-    val properties = mutableListOf<Property>()
-    val classIsRedacted = redactedAnnotations.any { declarationParent.hasAnnotationCompat(it) }
-    val classIsUnredacted = unRedactedAnnotations.any { declarationParent.hasAnnotationCompat(it) }
-    val supertypeIsRedacted by unsafeLazy {
-      declarationParent.getAllSuperclasses().any { supertype ->
-        redactedAnnotations.any { supertype.hasAnnotationCompat(it) }
-      }
-    }
-    var anyRedacted = false
-    var anyUnredacted = false
-    for (prop in declarationParent.properties) {
-      val parameter = constructorParameters[prop.name.asString()] ?: continue
-      val isRedacted = prop.isRedacted || parameter.isRedacted
-      val isUnredacted = prop.isUnredacted || parameter.isUnredacted
-      if (isRedacted) {
-        anyRedacted = true
-      }
-      if (isUnredacted) {
-        anyUnredacted = true
-      }
-      properties += Property(prop, isRedacted, isUnredacted, parameter)
+    check(_consumedPlanKeys.add(plan.key)) {
+      "Redaction plan '${plan.key}' (${plan.sourceOrigin}) would generate a second toString() " +
+        "implementation. Each plan must generate exactly one."
     }
 
-    if (classIsRedacted || supertypeIsRedacted || classIsUnredacted || anyRedacted) {
-      declaration.convertToGeneratedToString(
-        properties,
-        classIsRedacted,
-        classIsUnredacted,
-        supertypeIsRedacted,
-        anyUnredacted,
-      )
-    }
+    declaration.convertToGeneratedToString(declarationParent, plan)
 
     return super.visitFunctionNew(declaration)
   }
@@ -108,44 +72,29 @@ internal class RedactedIrVisitor(
       returnType.isString()
 
   private fun IrSimpleFunction.convertToGeneratedToString(
-    properties: List<Property>,
-    classIsRedacted: Boolean,
-    classIsUnredacted: Boolean,
-    supertypeIsRedacted: Boolean,
-    hasUnredactedProperties: Boolean,
+    irClass: IrClass,
+    plan: RedactionPlan,
   ) {
-    val parent = parent as IrClass
-
     origin = RedactedOrigin
+
+    val irPropertiesByName = irClass.properties.associateBy { it.name.asString() }
+    val plannedProperties =
+      plan.properties.mapNotNull { property ->
+        irPropertiesByName[property.name]?.let { property to it }
+      }
 
     body =
       DeclarationIrBuilder(pluginContext, symbol).irBlockBody {
         generateToStringMethodBody(
-          irClass = parent,
+          irClass = irClass,
           irFunction = this@convertToGeneratedToString,
-          irProperties = properties,
-          classIsRedacted = classIsRedacted,
-          classIsUnredacted = classIsUnredacted,
-          supertypeIsRedacted = supertypeIsRedacted,
-          hasUnredactedProperties = hasUnredactedProperties,
+          plan = plan,
+          irProperties = plannedProperties,
         )
       }
 
     isFakeOverride = false
   }
-
-  private val IrAnnotationContainer.isRedacted: Boolean
-    get() = redactedAnnotations.any { hasAnnotationCompat(it) }
-
-  private val IrAnnotationContainer.isUnredacted: Boolean
-    get() = unRedactedAnnotations.any { hasAnnotationCompat(it) }
-
-  private fun IrAnnotationContainer.hasAnnotationCompat(classId: ClassId): Boolean =
-    with(compatContext) {
-      annotationsCompat().any { annotation ->
-        annotation.symbol.owner.parentAsClass.classId == classId
-      }
-    }
 
   /**
    * The actual body of the toString method. Copied from
@@ -155,34 +104,35 @@ internal class RedactedIrVisitor(
   private fun IrBlockBodyBuilder.generateToStringMethodBody(
     irClass: IrClass,
     irFunction: IrFunction,
-    irProperties: List<Property>,
-    classIsRedacted: Boolean,
-    classIsUnredacted: Boolean,
-    supertypeIsRedacted: Boolean,
-    hasUnredactedProperties: Boolean,
+    plan: RedactionPlan,
+    irProperties: List<Pair<RedactionPlan.Property, IrProperty>>,
   ) {
     val irConcat = irConcat()
     irConcat.addArgument(irString(irClass.name.asString() + "("))
-    if (classIsRedacted && !classIsUnredacted && !hasUnredactedProperties) {
-      irConcat.addArgument(irString(replacementString))
+    val classIsRedacted = plan.effectiveRule == RedactionPlan.EffectiveRule.CLASS
+    val supertypeIsRedacted = plan.effectiveRule == RedactionPlan.EffectiveRule.SUPERTYPE
+    if (
+      classIsRedacted && !plan.classIsUnredacted && irProperties.none { it.first.isUnredacted }
+    ) {
+      irConcat.addArgument(irString(plan.replacement))
     } else {
       var first = true
-      for (property in irProperties) {
+      for ((property, irProperty) in irProperties) {
         if (!first) irConcat.addArgument(irString(", "))
 
-        irConcat.addArgument(irString(property.ir.name.asString() + "="))
+        irConcat.addArgument(irString(property.name + "="))
         val redactProperty =
           property.isRedacted ||
             (classIsRedacted && !property.isUnredacted) ||
-            (supertypeIsRedacted && !classIsUnredacted && !property.isUnredacted)
+            (supertypeIsRedacted && !plan.classIsUnredacted && !property.isUnredacted)
         if (redactProperty) {
-          irConcat.addArgument(irString(replacementString))
+          irConcat.addArgument(irString(plan.replacement))
         } else {
-          val irPropertyValue = irGetField(receiver(irFunction), property.ir.backingField!!)
+          val backingField = irProperty.backingField!!
+          val irPropertyValue = irGetField(receiver(irFunction), backingField)
 
-          val param = property.parameter
           val irPropertyStringValue =
-            if (param.type.isArray() || param.type.isPrimitiveArray()) {
+            if (backingField.type.isArray() || backingField.type.isPrimitiveArray()) {
               irCall(
                   context.irBuiltIns.dataClassArrayMemberToStringSymbol,
                   context.irBuiltIns.stringType,
