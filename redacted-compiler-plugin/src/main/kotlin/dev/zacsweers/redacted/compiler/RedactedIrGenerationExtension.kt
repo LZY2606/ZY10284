@@ -2,27 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 package dev.zacsweers.redacted.compiler
 
-import dev.zacsweers.metro.compiler.compat.CompatContext
 import org.jetbrains.kotlin.backend.common.extensions.IrGenerationExtension
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
 import org.jetbrains.kotlin.ir.declarations.IrModuleFragment
-import org.jetbrains.kotlin.name.ClassId
 
+/**
+ * Executes the [RedactionPlan]s registered by the FIR stage in [planRegistry]. This extension
+ * performs no annotation interpretation of its own.
+ */
 public class RedactedIrGenerationExtension(
-  private val replacementString: String,
-  private val redactedAnnotations: Set<ClassId>,
-  private val unRedactedAnnotations: Set<ClassId>,
-  private val compatContext: CompatContext = CompatContext.create(),
+  private val planRegistry: RedactionPlanRegistry,
+  private val irAdapter: RedactedIrAdapter = RedactedIrAdapter.Default,
 ) : IrGenerationExtension {
   override fun generate(moduleFragment: IrModuleFragment, pluginContext: IrPluginContext) {
-    val redactedTransformer =
-      RedactedIrVisitor(
-        pluginContext,
-        redactedAnnotations,
-        unRedactedAnnotations,
-        replacementString,
-        compatContext,
-      )
+    val redactedTransformer = RedactedIrVisitor(pluginContext, planRegistry, irAdapter)
     moduleFragment.transform(redactedTransformer, null)
   }
 }

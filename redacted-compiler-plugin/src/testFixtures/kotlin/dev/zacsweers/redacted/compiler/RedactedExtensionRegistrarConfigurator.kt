@@ -23,6 +23,8 @@ fun TestConfigurationBuilder.configurePlugin() {
   useCustomRuntimeClasspathProviders(::RedactedRuntimeClassPathProvider)
 
   useSourcePreprocessor(::RedactedDefaultImportPreprocessor)
+
+  useAdditionalService(::RedactionPlanRegistryService)
 }
 
 class RedactedExtensionRegistrarConfigurator(testServices: TestServices) :
@@ -44,17 +46,22 @@ class RedactedExtensionRegistrarConfigurator(testServices: TestServices) :
 
     val compatContext = CompatContext.create()
 
+    // One stage-contract registry per module: FIR registers plans, IR executes them.
+    val planRegistry = RedactionPlanRegistry()
+    testServices.redactionPlanRegistryService.registries += planRegistry
+
     with(RedactedCompilerPluginRegistrar()) {
       with(compatContext) {
         this@registerCompilerExtensions.registerFirExtensionCompat(
-          RedactedFirExtensionRegistrar(redactedAnnotations, unredactedAnnotations)
-        )
-        this@registerCompilerExtensions.registerIrExtensionCompat(
-          RedactedIrGenerationExtension(
-            replacementString,
+          RedactedFirExtensionRegistrar(
             redactedAnnotations,
             unredactedAnnotations,
+            replacementString,
+            planRegistry,
           )
+        )
+        this@registerCompilerExtensions.registerIrExtensionCompat(
+          RedactedIrGenerationExtension(planRegistry)
         )
       }
     }

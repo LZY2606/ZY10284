@@ -49,6 +49,24 @@ public class JvmBoxTestGenerated extends AbstractJvmBoxTest {
   }
 
   @Test
+  @TestMetadata("ExistingToString.kt")
+  public void testExistingToString() {
+    run("ExistingToString.kt");
+  }
+
+  @Test
+  @TestMetadata("MultiModule.kt")
+  public void testMultiModule() {
+    run("MultiModule.kt");
+  }
+
+  @Test
+  @TestMetadata("SameNameDifferentPackages.kt")
+  public void testSameNameDifferentPackages() {
+    run("SameNameDifferentPackages.kt");
+  }
+
+  @Test
   @TestMetadata("ValueClass.kt")
   public void testValueClass() {
     run("ValueClass.kt");

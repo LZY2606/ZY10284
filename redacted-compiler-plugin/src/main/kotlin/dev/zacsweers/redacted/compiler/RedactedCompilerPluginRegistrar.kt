@@ -43,18 +43,19 @@ public class RedactedCompilerPluginRegistrar : CompilerPluginRegistrar() {
         ClassId.fromString(it)
       }
 
+    // The stage contract handoff: FIR validates and registers plans, IR restores and executes.
+    val planRegistry = RedactionPlanRegistry()
+
     with(compatContext) {
       registerFirExtensionCompat(
-        RedactedFirExtensionRegistrar(redactedAnnotations, unRedactedAnnotations)
-      )
-      registerIrExtensionCompat(
-        RedactedIrGenerationExtension(
-          replacementString,
+        RedactedFirExtensionRegistrar(
           redactedAnnotations,
           unRedactedAnnotations,
-          compatContext,
+          replacementString,
+          planRegistry,
         )
       )
+      registerIrExtensionCompat(RedactedIrGenerationExtension(planRegistry))
     }
   }
 }

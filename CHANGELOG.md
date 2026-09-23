@@ -5,6 +5,7 @@ Changelog
 --------------
 
 - Build against Kotlin `2.4.20`.
+- Introduce an immutable `RedactionPlan` stage contract between FIR and IR. FIR diagnostics now validate classes and register serializable, `ClassId`-keyed plans; the IR backend restores plans by key and only executes the generation they describe, ensuring diagnostics and generated `toString()` implementations can no longer diverge. Compiler-version-specific IR symbol operations are isolated behind `RedactedIrAdapter`.
 
 1.18.0
 ------

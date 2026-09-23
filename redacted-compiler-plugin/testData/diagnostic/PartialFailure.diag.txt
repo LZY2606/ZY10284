@@ -1,0 +1,1 @@
+/PartialFailure.kt:8:12: error: @Redacted does not support enum classes or entries!

@@ -1,10 +1,7 @@
 // Copyright (C) 2021 Zac Sweers
 // SPDX-License-Identifier: Apache-2.0
-@file:OptIn(UnsafeDuringIrConstructionAPI::class)
-
 package dev.zacsweers.redacted.compiler
 
-import dev.zacsweers.metro.compiler.compat.CompatContext
 import org.jetbrains.kotlin.backend.common.IrElementTransformerVoidWithContext
 import org.jetbrains.kotlin.backend.common.extensions.IrPluginContext
 import org.jetbrains.kotlin.backend.common.lower.DeclarationIrBuilder
@@ -17,135 +14,67 @@ import org.jetbrains.kotlin.ir.builders.irGet
 import org.jetbrains.kotlin.ir.builders.irGetField
 import org.jetbrains.kotlin.ir.builders.irReturn
 import org.jetbrains.kotlin.ir.builders.irString
-import org.jetbrains.kotlin.ir.declarations.IrAnnotationContainer
 import org.jetbrains.kotlin.ir.declarations.IrClass
 import org.jetbrains.kotlin.ir.declarations.IrFunction
-import org.jetbrains.kotlin.ir.declarations.IrParameterKind
 import org.jetbrains.kotlin.ir.declarations.IrProperty
 import org.jetbrains.kotlin.ir.declarations.IrSimpleFunction
 import org.jetbrains.kotlin.ir.declarations.IrValueParameter
 import org.jetbrains.kotlin.ir.expressions.addArgument
-import org.jetbrains.kotlin.ir.symbols.UnsafeDuringIrConstructionAPI
 import org.jetbrains.kotlin.ir.types.isArray
-import org.jetbrains.kotlin.ir.types.isString
-import org.jetbrains.kotlin.ir.util.classId
-import org.jetbrains.kotlin.ir.util.getAllSuperclasses
 import org.jetbrains.kotlin.ir.util.isPrimitiveArray
-import org.jetbrains.kotlin.ir.util.parentAsClass
 import org.jetbrains.kotlin.ir.util.parentClassOrNull
 import org.jetbrains.kotlin.ir.util.primaryConstructor
 import org.jetbrains.kotlin.ir.util.properties
-import org.jetbrains.kotlin.name.ClassId
-import org.jetbrains.kotlin.util.OperatorNameConventions
 
+/**
+ * Restores [RedactionPlan]s produced by the FIR stage from the [planRegistry] and only executes
+ * the generation they describe. All annotation interpretation and validation happens in FIR.
+ */
 internal class RedactedIrVisitor(
   private val pluginContext: IrPluginContext,
-  private val redactedAnnotations: Set<ClassId>,
-  private val unRedactedAnnotations: Set<ClassId>,
-  private val replacementString: String,
-  private val compatContext: CompatContext,
+  private val planRegistry: RedactionPlanRegistry,
+  private val irAdapter: RedactedIrAdapter,
 ) : IrElementTransformerVoidWithContext() {
-
-  private class Property(
-    val ir: IrProperty,
-    val isRedacted: Boolean,
-    val isUnredacted: Boolean,
-    val parameter: IrValueParameter,
-  )
 
   override fun visitFunctionNew(declaration: IrFunction): IrStatement {
     if (declaration !is IrSimpleFunction) return super.visitFunctionNew(declaration)
-    if (!declaration.isToStringFromAny()) return super.visitFunctionNew(declaration)
+    if (!irAdapter.isToStringFromAny(declaration)) return super.visitFunctionNew(declaration)
+    if (declaration.origin == RedactedOrigin) return super.visitFunctionNew(declaration)
 
     val declarationParent =
       declaration.parentClassOrNull ?: return super.visitFunctionNew(declaration)
-    val primaryConstructor =
-      declarationParent.primaryConstructor ?: return super.visitFunctionNew(declaration)
-    val constructorParameters =
-      primaryConstructor.parameters
-        .filter { it.kind == IrParameterKind.Regular }
-        .associateBy { it.name.asString() }
+    val key = irAdapter.planKeyOf(declarationParent) ?: return super.visitFunctionNew(declaration)
+    val plan = planRegistry.planFor(key) ?: return super.visitFunctionNew(declaration)
 
-    val properties = mutableListOf<Property>()
-    val classIsRedacted = redactedAnnotations.any { declarationParent.hasAnnotationCompat(it) }
-    val classIsUnredacted = unRedactedAnnotations.any { declarationParent.hasAnnotationCompat(it) }
-    val supertypeIsRedacted by unsafeLazy {
-      declarationParent.getAllSuperclasses().any { supertype ->
-        redactedAnnotations.any { supertype.hasAnnotationCompat(it) }
-      }
-    }
-    var anyRedacted = false
-    var anyUnredacted = false
-    for (prop in declarationParent.properties) {
-      val parameter = constructorParameters[prop.name.asString()] ?: continue
-      val isRedacted = prop.isRedacted || parameter.isRedacted
-      val isUnredacted = prop.isUnredacted || parameter.isUnredacted
-      if (isRedacted) {
-        anyRedacted = true
-      }
-      if (isUnredacted) {
-        anyUnredacted = true
-      }
-      properties += Property(prop, isRedacted, isUnredacted, parameter)
-    }
-
-    if (classIsRedacted || supertypeIsRedacted || classIsUnredacted || anyRedacted) {
-      declaration.convertToGeneratedToString(
-        properties,
-        classIsRedacted,
-        classIsUnredacted,
-        supertypeIsRedacted,
-        anyUnredacted,
-      )
-    }
+    declaration.convertToGeneratedToString(plan, declarationParent)
+    planRegistry.recordGeneration(key)
 
     return super.visitFunctionNew(declaration)
   }
 
-  private fun IrFunction.isToStringFromAny(): Boolean =
-    name == OperatorNameConventions.TO_STRING &&
-      parameters.singleOrNull()?.kind == IrParameterKind.DispatchReceiver &&
-      returnType.isString()
-
-  private fun IrSimpleFunction.convertToGeneratedToString(
-    properties: List<Property>,
-    classIsRedacted: Boolean,
-    classIsUnredacted: Boolean,
-    supertypeIsRedacted: Boolean,
-    hasUnredactedProperties: Boolean,
-  ) {
-    val parent = parent as IrClass
-
+  private fun IrSimpleFunction.convertToGeneratedToString(plan: RedactionPlan, parent: IrClass) {
     origin = RedactedOrigin
+
+    val constructorParamsByName =
+      parent.primaryConstructor
+        ?.let(irAdapter::regularValueParameters)
+        .orEmpty()
+        .associateBy { it.name.asString() }
+    val irPropertiesByName = parent.properties.associateBy { it.name.asString() }
 
     body =
       DeclarationIrBuilder(pluginContext, symbol).irBlockBody {
         generateToStringMethodBody(
           irClass = parent,
           irFunction = this@convertToGeneratedToString,
-          irProperties = properties,
-          classIsRedacted = classIsRedacted,
-          classIsUnredacted = classIsUnredacted,
-          supertypeIsRedacted = supertypeIsRedacted,
-          hasUnredactedProperties = hasUnredactedProperties,
+          plan = plan,
+          irPropertiesByName = irPropertiesByName,
+          constructorParamsByName = constructorParamsByName,
         )
       }
 
     isFakeOverride = false
   }
-
-  private val IrAnnotationContainer.isRedacted: Boolean
-    get() = redactedAnnotations.any { hasAnnotationCompat(it) }
-
-  private val IrAnnotationContainer.isUnredacted: Boolean
-    get() = unRedactedAnnotations.any { hasAnnotationCompat(it) }
-
-  private fun IrAnnotationContainer.hasAnnotationCompat(classId: ClassId): Boolean =
-    with(compatContext) {
-      annotationsCompat().any { annotation ->
-        annotation.symbol.owner.parentAsClass.classId == classId
-      }
-    }
 
   /**
    * The actual body of the toString method. Copied from
@@ -155,32 +84,31 @@ internal class RedactedIrVisitor(
   private fun IrBlockBodyBuilder.generateToStringMethodBody(
     irClass: IrClass,
     irFunction: IrFunction,
-    irProperties: List<Property>,
-    classIsRedacted: Boolean,
-    classIsUnredacted: Boolean,
-    supertypeIsRedacted: Boolean,
-    hasUnredactedProperties: Boolean,
+    plan: RedactionPlan,
+    irPropertiesByName: Map<String, IrProperty>,
+    constructorParamsByName: Map<String, IrValueParameter>,
   ) {
     val irConcat = irConcat()
     irConcat.addArgument(irString(irClass.name.asString() + "("))
-    if (classIsRedacted && !classIsUnredacted && !hasUnredactedProperties) {
-      irConcat.addArgument(irString(replacementString))
+    if (plan.classIsRedacted && !plan.classIsUnredacted && !plan.hasUnredactedProperties) {
+      irConcat.addArgument(irString(plan.replacement))
     } else {
       var first = true
-      for (property in irProperties) {
+      for (property in plan.properties) {
         if (!first) irConcat.addArgument(irString(", "))
 
-        irConcat.addArgument(irString(property.ir.name.asString() + "="))
+        irConcat.addArgument(irString(property.name + "="))
         val redactProperty =
           property.isRedacted ||
-            (classIsRedacted && !property.isUnredacted) ||
-            (supertypeIsRedacted && !classIsUnredacted && !property.isUnredacted)
+            (plan.classIsRedacted && !property.isUnredacted) ||
+            (plan.supertypeIsRedacted && !plan.classIsUnredacted && !property.isUnredacted)
         if (redactProperty) {
-          irConcat.addArgument(irString(replacementString))
+          irConcat.addArgument(irString(plan.replacement))
         } else {
-          val irPropertyValue = irGetField(receiver(irFunction), property.ir.backingField!!)
+          val irPropertyValue =
+            irGetField(receiver(irFunction), irPropertiesByName.getValue(property.name).backingField!!)
 
-          val param = property.parameter
+          val param = constructorParamsByName.getValue(property.name)
           val irPropertyStringValue =
             if (param.type.isArray() || param.type.isPrimitiveArray()) {
               irCall(

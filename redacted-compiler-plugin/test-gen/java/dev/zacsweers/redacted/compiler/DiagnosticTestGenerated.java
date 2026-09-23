@@ -65,4 +65,10 @@ public class DiagnosticTestGenerated extends AbstractDiagnosticTest {
   public void testNonDataClass() {
     run("NonDataClass.kt");
   }
+
+  @Test
+  @TestMetadata("PartialFailure.kt")
+  public void testPartialFailure() {
+    run("PartialFailure.kt");
+  }
 }

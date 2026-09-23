@@ -22,6 +22,8 @@ open class AbstractJvmBoxTest : AbstractFirLightTreeBlackBoxCodegenTest() {
     with(builder) {
       configurePlugin()
 
+      useAfterAnalysisCheckers(::RedactionPlanGenerationChecker)
+
       defaultDirectives {
         JVM_TARGET.with(
           JvmTarget.fromString(System.getProperty("rcp.jvmTarget", JvmTarget.JVM_11.description))!!

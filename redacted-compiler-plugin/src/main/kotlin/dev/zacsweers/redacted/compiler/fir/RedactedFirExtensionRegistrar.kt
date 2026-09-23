@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package dev.zacsweers.redacted.compiler.fir
 
+import dev.zacsweers.redacted.compiler.RedactionPlanRegistry
 import dev.zacsweers.redacted.compiler.firstNotNullResult
 import dev.zacsweers.redacted.compiler.unsafeLazy
 import org.jetbrains.kotlin.descriptors.isEnumEntry
@@ -30,6 +31,7 @@ import org.jetbrains.kotlin.fir.expressions.FirAnnotation
 import org.jetbrains.kotlin.fir.extensions.FirExtensionRegistrar
 import org.jetbrains.kotlin.fir.resolve.fullyExpandedType
 import org.jetbrains.kotlin.fir.resolve.toSymbol
+import org.jetbrains.kotlin.fir.symbols.impl.FirConstructorSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirNamedFunctionSymbol
 import org.jetbrains.kotlin.fir.symbols.impl.FirPropertySymbol
 import org.jetbrains.kotlin.fir.types.ConeClassLikeType
@@ -41,12 +43,21 @@ import org.jetbrains.kotlin.fir.types.isString
 import org.jetbrains.kotlin.name.ClassId
 import org.jetbrains.kotlin.util.OperatorNameConventions
 
-public class RedactedFirExtensionRegistrar(
+public class RedactedFirExtensionRegistrar
+@JvmOverloads
+constructor(
   private val redactedAnnotations: Set<ClassId>,
   private val unRedactedAnnotations: Set<ClassId>,
+  private val replacementString: String = "\u2588\u2588",
+  private val planRegistry: RedactionPlanRegistry = RedactionPlanRegistry(),
 ) : FirExtensionRegistrar() {
   override fun ExtensionRegistrarContext.configurePlugin() {
-    +RedactedFirBuiltIns.getFactory(redactedAnnotations, unRedactedAnnotations)
+    +RedactedFirBuiltIns.getFactory(
+      redactedAnnotations,
+      unRedactedAnnotations,
+      replacementString,
+      planRegistry,
+    )
     +::FirRedactedCheckers
   }
 }
@@ -98,10 +109,13 @@ internal object FirRedactedDeclarationChecker : FirClassChecker(MppCheckerKind.C
     val unredactedProperties = mutableMapOf<FirPropertySymbol, Pair<FirAnnotation, ClassId>>()
 
     val properties = mutableListOf<FirPropertySymbol>()
+    var primaryConstructor: FirConstructorSymbol? = null
     var customToStringFunction: FirNamedFunctionSymbol? = null
     declaration.processAllDeclarations(context.session) { symbol ->
       if (symbol is FirPropertySymbol) {
         properties += symbol
+      } else if (symbol is FirConstructorSymbol && symbol.isPrimary) {
+        primaryConstructor = symbol
       } else if (symbol is FirNamedFunctionSymbol) {
         if (
           symbol.isToStringFromAny(context.session) && symbol.origin == FirDeclarationOrigin.Source
@@ -252,7 +266,15 @@ internal object FirRedactedDeclarationChecker : FirClassChecker(MppCheckerKind.C
         }
         return
       }
-      // Rest filled in by the IR plugin
+      // Validated. Record the immutable plan for the IR stage to restore and execute.
+      FirRedactionPlanComputer.compute(
+          declaration,
+          properties,
+          primaryConstructor,
+          classRedactedAnnotations.map { it.second },
+          classUnRedactedAnnotations.map { it.second },
+        )
+        ?.let(context.session.redactionPlanRegistry::register)
     }
   }
 
